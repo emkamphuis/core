@@ -26,6 +26,7 @@ from homeassistant.const import (
     CONF_FRIENDLY_NAME,
     CONF_ICON_TEMPLATE,
     CONF_OPTIMISTIC,
+    CONF_UNIQUE_ID,
     CONF_VALUE_TEMPLATE,
     EVENT_HOMEASSISTANT_START,
     MATCH_ALL,
@@ -90,6 +91,7 @@ COVER_SCHEMA = vol.All(
             vol.Optional(TILT_ACTION): cv.SCRIPT_SCHEMA,
             vol.Optional(CONF_FRIENDLY_NAME): cv.string,
             vol.Optional(CONF_ENTITY_ID): cv.entity_ids,
+            vol.Optional(CONF_UNIQUE_ID): cv.string,
         }
     ),
     cv.has_at_least_one_key(OPEN_ACTION, POSITION_ACTION),
@@ -121,6 +123,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
         tilt_action = device_config.get(TILT_ACTION)
         optimistic = device_config.get(CONF_OPTIMISTIC)
         tilt_optimistic = device_config.get(CONF_TILT_OPTIMISTIC)
+        unique_id = device_config.get(CONF_UNIQUE_ID)
 
         templates = {
             CONF_VALUE_TEMPLATE: state_template,
@@ -156,6 +159,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
                 optimistic,
                 tilt_optimistic,
                 entity_ids,
+                unique_id,
             )
         )
 
@@ -185,6 +189,7 @@ class CoverTemplate(CoverEntity):
         optimistic,
         tilt_optimistic,
         entity_ids,
+        unique_id,
     ):
         """Initialize the Template cover."""
         self.hass = hass
@@ -200,20 +205,21 @@ class CoverTemplate(CoverEntity):
         self._entity_picture_template = entity_picture_template
         self._availability_template = availability_template
         self._open_script = None
+        domain = __name__.split(".")[-2]
         if open_action is not None:
-            self._open_script = Script(hass, open_action)
+            self._open_script = Script(hass, open_action, friendly_name, domain)
         self._close_script = None
         if close_action is not None:
-            self._close_script = Script(hass, close_action)
+            self._close_script = Script(hass, close_action, friendly_name, domain)
         self._stop_script = None
         if stop_action is not None:
-            self._stop_script = Script(hass, stop_action)
+            self._stop_script = Script(hass, stop_action, friendly_name, domain)
         self._position_script = None
         if position_action is not None:
-            self._position_script = Script(hass, position_action)
+            self._position_script = Script(hass, position_action, friendly_name, domain)
         self._tilt_script = None
         if tilt_action is not None:
-            self._tilt_script = Script(hass, tilt_action)
+            self._tilt_script = Script(hass, tilt_action, friendly_name, domain)
         self._optimistic = optimistic or (not state_template and not position_template)
         self._tilt_optimistic = tilt_optimistic or not tilt_template
         self._icon = None
@@ -222,6 +228,7 @@ class CoverTemplate(CoverEntity):
         self._tilt_value = None
         self._entities = entity_ids
         self._available = True
+        self._unique_id = unique_id
 
     async def async_added_to_hass(self):
         """Register callbacks."""
@@ -250,6 +257,11 @@ class CoverTemplate(CoverEntity):
     def name(self):
         """Return the name of the cover."""
         return self._name
+
+    @property
+    def unique_id(self):
+        """Return the unique id of this cover."""
+        return self._unique_id
 
     @property
     def is_closed(self):

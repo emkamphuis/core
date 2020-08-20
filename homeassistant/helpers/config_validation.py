@@ -37,6 +37,7 @@ from homeassistant.const import (
     ATTR_ENTITY_ID,
     CONF_ABOVE,
     CONF_ALIAS,
+    CONF_ATTRIBUTE,
     CONF_BELOW,
     CONF_CHOOSE,
     CONF_CONDITION,
@@ -86,7 +87,7 @@ import homeassistant.util.dt as dt_util
 
 # pylint: disable=invalid-name
 
-TIME_PERIOD_ERROR = "offset {} should be format 'HH:MM' or 'HH:MM:SS'"
+TIME_PERIOD_ERROR = "offset {} should be format 'HH:MM', 'HH:MM:SS' or 'HH:MM:SS.F'"
 
 # Home Assistant types
 byte = vol.All(vol.Coerce(int), vol.Range(min=0, max=255))
@@ -153,6 +154,17 @@ def boolean(value: Any) -> bool:
         # type ignore: https://github.com/python/mypy/issues/3186
         return value != 0  # type: ignore
     raise vol.Invalid(f"invalid boolean value {value}")
+
+
+_WS = re.compile("\\s*")
+
+
+def whitespace(value: Any) -> str:
+    """Validate result contains only whitespace."""
+    if isinstance(value, str) and _WS.fullmatch(value):
+        return value
+
+    raise vol.Invalid(f"contains non-whitespace: {value}")
 
 
 def isdevice(value: Any) -> str:
@@ -299,11 +311,11 @@ time_period_dict = vol.All(
     dict,
     vol.Schema(
         {
-            "days": vol.Coerce(int),
-            "hours": vol.Coerce(int),
-            "minutes": vol.Coerce(int),
-            "seconds": vol.Coerce(int),
-            "milliseconds": vol.Coerce(int),
+            "days": vol.Coerce(float),
+            "hours": vol.Coerce(float),
+            "minutes": vol.Coerce(float),
+            "seconds": vol.Coerce(float),
+            "milliseconds": vol.Coerce(float),
         }
     ),
     has_at_least_one_key("days", "hours", "minutes", "seconds", "milliseconds"),
@@ -357,17 +369,17 @@ def time_period_str(value: str) -> timedelta:
     elif value.startswith("+"):
         value = value[1:]
 
-    try:
-        parsed = [int(x) for x in value.split(":")]
-    except ValueError:
+    parsed = value.split(":")
+    if len(parsed) not in (2, 3):
         raise vol.Invalid(TIME_PERIOD_ERROR.format(value))
-
-    if len(parsed) == 2:
-        hour, minute = parsed
-        second = 0
-    elif len(parsed) == 3:
-        hour, minute, second = parsed
-    else:
+    try:
+        hour = int(parsed[0])
+        minute = int(parsed[1])
+        try:
+            second = float(parsed[2])
+        except IndexError:
+            second = 0
+    except ValueError:
         raise vol.Invalid(TIME_PERIOD_ERROR.format(value))
 
     offset = timedelta(hours=hour, minutes=minute, seconds=second)
@@ -378,10 +390,10 @@ def time_period_str(value: str) -> timedelta:
     return offset
 
 
-def time_period_seconds(value: Union[int, str]) -> timedelta:
+def time_period_seconds(value: Union[float, str]) -> timedelta:
     """Validate and transform seconds to a time offset."""
     try:
-        return timedelta(seconds=int(value))
+        return timedelta(seconds=float(value))
     except (ValueError, TypeError):
         raise vol.Invalid(f"Expected seconds, got {value}")
 
@@ -402,6 +414,7 @@ def positive_timedelta(value: timedelta) -> timedelta:
 
 
 positive_time_period_dict = vol.All(time_period_dict, positive_timedelta)
+positive_time_period = vol.All(time_period, positive_timedelta)
 
 
 def remove_falsy(value: List[T]) -> List[T]:
@@ -528,6 +541,11 @@ def template_complex(value: Any) -> Any:
     if isinstance(value, str):
         return template(value)
     return value
+
+
+positive_time_period_template = vol.Any(
+    positive_time_period, template, template_complex
+)
 
 
 def datetime(value: Any) -> datetime_sys:
@@ -862,6 +880,7 @@ NUMERIC_STATE_CONDITION_SCHEMA = vol.All(
         {
             vol.Required(CONF_CONDITION): "numeric_state",
             vol.Required(CONF_ENTITY_ID): entity_ids,
+            vol.Optional(CONF_ATTRIBUTE): str,
             CONF_BELOW: vol.Coerce(float),
             CONF_ABOVE: vol.Coerce(float),
             vol.Optional(CONF_VALUE_TEMPLATE): template,
@@ -875,8 +894,9 @@ STATE_CONDITION_SCHEMA = vol.All(
         {
             vol.Required(CONF_CONDITION): "state",
             vol.Required(CONF_ENTITY_ID): entity_ids,
+            vol.Optional(CONF_ATTRIBUTE): str,
             vol.Required(CONF_STATE): vol.Any(str, [str]),
-            vol.Optional(CONF_FOR): vol.All(time_period, positive_timedelta),
+            vol.Optional(CONF_FOR): positive_time_period,
             # To support use_trigger_value in automation
             # Deprecated 2016/04/25
             vol.Optional("from"): str,
@@ -989,12 +1009,14 @@ CONDITION_SCHEMA: vol.Schema = key_value_schemas(
     },
 )
 
+TRIGGER_SCHEMA = vol.All(
+    ensure_list, [vol.Schema({vol.Required(CONF_PLATFORM): str}, extra=vol.ALLOW_EXTRA)]
+)
+
 _SCRIPT_DELAY_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_ALIAS): string,
-        vol.Required(CONF_DELAY): vol.Any(
-            vol.All(time_period, positive_timedelta), template, template_complex
-        ),
+        vol.Required(CONF_DELAY): positive_time_period_template,
     }
 )
 
@@ -1002,7 +1024,7 @@ _SCRIPT_WAIT_TEMPLATE_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_ALIAS): string,
         vol.Required(CONF_WAIT_TEMPLATE): template,
-        vol.Optional(CONF_TIMEOUT): vol.All(time_period, positive_timedelta),
+        vol.Optional(CONF_TIMEOUT): positive_time_period_template,
         vol.Optional(CONF_CONTINUE_ON_TIMEOUT): boolean,
     }
 )
